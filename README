@@ -1,0 +1,4 @@
+go-multiq: a relaxed concurrent priority queue
+
+godoc: https://godoc.org/github.com/dgryski/go-multiq
+
