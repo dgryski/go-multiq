@@ -16,7 +16,7 @@ import (
 type Q struct {
 	qs []pq.PriorityQueue
 
-	trylock []uint32
+	locks []lock
 
 	// minimum priority for each queue
 	mins []int32
@@ -30,9 +30,9 @@ func New(c int) *Q {
 		mins[i] = math.MaxInt32
 	}
 	return &Q{
-		qs:      make([]pq.PriorityQueue, c),
-		trylock: make([]uint32, c),
-		mins:    mins,
+		qs:    make([]pq.PriorityQueue, c),
+		locks: make([]lock, c),
+		mins:  mins,
 	}
 }
 
@@ -48,13 +48,13 @@ func (q *Q) Insert(v interface{}, prio int32) {
 	var iter int
 	for {
 		rng = xorshiftMult64(rng)
-		c = reduce(uint32(rng), len(q.trylock))
-		gotlock := atomic.CompareAndSwapUint32(&q.trylock[c], 0, 1)
+		c = reduce(uint32(rng), len(q.locks))
+		gotlock := q.locks[c].trylock()
 		if gotlock {
 			break
 		}
 		iter++
-		if iter >= len(q.trylock) {
+		if iter >= len(q.locks) {
 			runtime.Gosched()
 		}
 	}
@@ -66,7 +66,7 @@ func (q *Q) Insert(v interface{}, prio int32) {
 	atomic.StoreInt32(&q.mins[c], q.qs[c][0].Priority)
 
 	// unlock
-	atomic.StoreUint32(&q.trylock[c], 0)
+	q.locks[c].unlock()
 }
 
 func (q *Q) DeleteMin() (v interface{}, prio int32) {
@@ -81,10 +81,10 @@ func (q *Q) DeleteMin() (v interface{}, prio int32) {
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		rng = xorshiftMult64(rng)
-		i = reduce(uint32(rng), len(q.trylock))
+		i = reduce(uint32(rng), len(q.locks))
 
 		rng = xorshiftMult64(rng)
-		j = reduce(uint32(rng), len(q.trylock))
+		j = reduce(uint32(rng), len(q.locks))
 
 		mini := atomic.LoadInt32(&q.mins[i])
 		minj := atomic.LoadInt32(&q.mins[j])
@@ -97,11 +97,11 @@ func (q *Q) DeleteMin() (v interface{}, prio int32) {
 			continue
 		}
 
-		gotlock := atomic.CompareAndSwapUint32(&q.trylock[i], 0, 1)
+		gotlock := q.locks[i].trylock()
 		if gotlock {
 			if len(q.qs[i]) == 0 {
 				// queue was empty -- unlock and try again
-				atomic.StoreUint32(&q.trylock[i], 0)
+				q.locks[i].unlock()
 				continue
 			}
 
@@ -114,19 +114,29 @@ func (q *Q) DeleteMin() (v interface{}, prio int32) {
 			}
 
 			// unlock
-			atomic.StoreUint32(&q.trylock[i], 0)
+			q.locks[i].unlock()
 
 			item := e.(*pq.Item)
 
 			return item.Value, item.Priority
 		}
 
-		if attempt > len(q.trylock) {
+		if attempt > len(q.locks) {
 			runtime.Gosched()
 		}
 	}
 
 	return nil, math.MaxInt32
+}
+
+type lock uint32
+
+func (l *lock) trylock() bool {
+	return atomic.CompareAndSwapUint32((*uint32)(l), 0, 1)
+}
+
+func (l *lock) unlock() {
+	atomic.StoreUint32((*uint32)(l), 0)
 }
 
 // http://lemire.me/blog/2016/06/27/a-fast-alternative-to-the-modulo-reduction/
