@@ -39,7 +39,7 @@ func New(c int) *Q {
 // Insert adds an element to the queue
 func (q *Q) Insert(v interface{}, prio int32) {
 
-	rng := rdtsc()
+	rng := rdrand()
 
 	// Implementing our own lock and spinning here is probably bad,
 	// but sync.Mutex has no TryLock()
@@ -71,7 +71,7 @@ func (q *Q) Insert(v interface{}, prio int32) {
 
 func (q *Q) DeleteMin() (v interface{}, prio int32) {
 
-	rng := rdtsc()
+	rng := rdrand()
 
 	var i, j uint32
 
